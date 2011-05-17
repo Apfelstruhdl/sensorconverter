@@ -300,7 +300,7 @@ int main(int argc, char** argv) {
             float press = linedata[7].toFloat();
             unsigned int maxtime = time;
             if (previousetime !=0 && previousetime + 1 != maxtime) {
-                for (int i = previousetime; i<maxtime;i++) {
+                for (unsigned int i = previousetime; i<maxtime;i++) {
                     ebassvalues[i].push_back(latitude);
                     ebassvalues[i].push_back(latitude);
                     ebassvalues[i].push_back(height);
@@ -327,7 +327,7 @@ int main(int argc, char** argv) {
         while (j.hasNext()) {
             j.next();
             if (previoustime != 0 && j.key() != previoustime ) {
-                for (int i=previoustime+1;i<j.key();i++) {
+                for (unsigned int i=previoustime+1;i<j.key();i++) {
                     ebassvalues[i] = ebassvalues[previoustime];
                 }
             }
