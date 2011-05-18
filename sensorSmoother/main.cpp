@@ -8,8 +8,9 @@
 #include <QQueue>
 #include <QDebug>
 
-float meanValue (QList<float> &list)
+float meanValue (const QList<float> &list)
 {
+  //qDebug() << list;
   Q_ASSERT(list.size() > 0);
   float mean = 0;
   int nans = 0;
@@ -20,7 +21,25 @@ float meanValue (QList<float> &list)
       else
         mean += *it;
   }
+  Q_ASSERT(list.size() > nans);
   return mean/(list.size()-nans);
+}
+
+float medianValue (const QList<float> &list)
+{
+  QList<float> sortedList;
+  //qDebug() << list;
+  Q_ASSERT(list.size() > 0);
+  QList<float>::const_iterator it;
+  for ( it=list.begin() ; it != list.end(); it++ ) {
+      if(!isnan(*it))
+        sortedList << *it;
+  }
+  if(sortedList.size() > 0) {
+    qSort(sortedList);
+    return sortedList.at(sortedList.size()/2);
+  }
+    else return sqrt(-1);
 }
 
 int main(int argc, char** argv)
@@ -60,52 +79,72 @@ int main(int argc, char** argv)
 
   Int_t nEntries = tree->GetEntries();
 
-  const Int_t bufferSize = 360; //seconds before and ahead
+  const Int_t bufferSize = 20*60; //seconds around actual time
 
   tree->GetEntry(0);
 
-  QQueue<float> bufferOld;
-  bufferOld.reserve(bufferSize);
-  QQueue<float> bufferFuture;
-  bufferFuture.reserve(bufferSize);
+  QQueue<float> smoothBuffer;
+  smoothBuffer.reserve(bufferSize);
+
+
+
+
+  //save for analysis
+  QVector<float> times;
+  times.reserve( bnTime->GetEntries());
+  QVector<float> pressures;
+  pressures.reserve( bnTime->GetEntries());
 
   //fill future buffer
-  for (Int_t i=1;i<bufferSize+1;i++) {
+  for (Int_t i=1;i<bufferSize/2;i++) {
     tree->GetEntry(i);
-    bufferFuture << pressure;
+    smoothBuffer << pressure;
+
+    times << time;
+    pressures << pressure;
   }
 
-  //now history and future buffers are filled
-
-  std::cout << "history mean = " << meanValue(bufferOld) << std::endl;
-  std::cout << "future mean = " << meanValue(bufferFuture) << std::endl;
+  std::cout << "buffer mean = " << medianValue(smoothBuffer) << std::endl;
 
   for (Int_t i=0;i<nEntries;i++) {
-    tree->GetEntry(i);
-    bufferOld.enqueue(pressure);
-    pressureSmoothed = (meanValue(bufferOld) + meanValue(bufferFuture))/2.;
+    //if buffer is filled, removed last item
+    if(smoothBuffer.size() >= bufferSize || (i+bufferSize/2 > nEntries))
+      smoothBuffer.dequeue();
+
+    //calculated the smoothBuffers mean, used to decide if next value is added:
+    pressureSmoothed = meanValue(smoothBuffer);
+
+    //read next value in tree, which is appended at front of the buffer:
+    if (i+bufferSize/2 < nEntries) {
+      tree->GetEntry(i+bufferSize/2);
+    }
+
+    times << time;
+    pressures << pressure;
+
+    if (false) {
+      qDebug("pressureSmoothed = %f", pressureSmoothed);
+      qDebug("abweichung = %f", fabs(pressureSmoothed-pressure) / pressureSmoothed) ;
+    }
+
+    if(isnan(pressure) || isnan(pressureSmoothed)  || (fabs(pressureSmoothed-pressure) / pressureSmoothed < 0.005)) //only accept pressure
+      smoothBuffer.enqueue(pressure);
+    else
+      smoothBuffer.enqueue(sqrt(-1));
+
 
     bnPressureSmoothed->Fill();
 
     if(i % 1000 == 0) {
       std::cout << i << std::endl;
-      std::cout << "history size = " << bufferOld.size() << std::endl;
-      std::cout << "future size = " << bufferFuture.size() << std::endl;
-      std::cout << "history mean = " << meanValue(bufferOld) << std::endl;
-      std::cout << "future mean = " << meanValue(bufferFuture) << std::endl;
+      std::cout << "buffer size = " << smoothBuffer.size() << std::endl;
+      std::cout << "buffer mean = " << pressureSmoothed << std::endl;
       std::cout << "time = " << time << " pressure = " << pressure << " pressureSmoothed = " << pressureSmoothed << std::endl;
     }
-
-    if(bufferOld.size() >= bufferSize)
-      bufferOld.dequeue();
-
-    //should not read twice:
-    if (i+bufferSize < nEntries) {
-      tree->GetEntry(i+bufferSize);
-      bufferFuture.enqueue(pressure);
-    }
-    bufferFuture.dequeue();
   }
+
+
+
 
 
   tree->Write("",TObject::kOverwrite);
