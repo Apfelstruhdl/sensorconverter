@@ -4,6 +4,10 @@
 #include <TROOT.h>
 #include <TFile.h>
 #include <TTree.h>
+#include <TGraph.h>
+#include <TGraphSmooth.h>
+#include <TH2D.h>
+#include <TVirtualFFT.h>
 
 #include <QQueue>
 #include <QDebug>
@@ -35,11 +39,13 @@ float medianValue (const QList<float> &list)
       if(!isnan(*it))
         sortedList << *it;
   }
+  double ret = 0;
   if(sortedList.size() > 0) {
     qSort(sortedList);
     return sortedList.at(sortedList.size()/2);
   }
-    else return sqrt(-1);
+  else
+    return sqrt(-1);
 }
 
 int main(int argc, char** argv)
@@ -59,6 +65,7 @@ int main(int argc, char** argv)
 
   TBranch *bnTime  = tree->GetBranch("time");
   TBranch *bnPressure = tree->GetBranch("TRD_PRESSURE");
+  TBranch *bnTemp  = tree->GetBranch("TRD_GAS_COLD_TEMP");
 
   TBranch *b = tree->GetBranch("TRD_PRESSURE_SMOOTHED");
   tree->GetListOfBranches()->Remove(b);
@@ -71,11 +78,13 @@ int main(int argc, char** argv)
   float time = 0;
   float pressure = 0;
   float pressureSmoothed = 0;
+  float temp = 0;
 
   TBranch *bnPressureSmoothed = tree->Branch("TRD_PRESSURE_SMOOTHED", &pressureSmoothed);
 
   bnTime->SetAddress(&time);
   bnPressure->SetAddress(&pressure);
+  bnTemp->SetAddress(&temp);
 
   Int_t nEntries = tree->GetEntries();
 
@@ -94,6 +103,11 @@ int main(int argc, char** argv)
   times.reserve( bnTime->GetEntries());
   QVector<float> pressures;
   pressures.reserve( bnTime->GetEntries());
+  QVector<float> pressuresSmoothed;
+  pressuresSmoothed.reserve( bnTime->GetEntries());
+
+  //correlation temperature pressure
+  TH2D* corrPlot = new TH2D("temperatur-pressure correlation","temperatur-pressure correlation;temperature trd:pressure/mbar",100,20,40,100,1000,1150);
 
   //fill future buffer
   for (Int_t i=1;i<bufferSize/2;i++) {
@@ -102,6 +116,7 @@ int main(int argc, char** argv)
 
     times << time;
     pressures << pressure;
+    //corrPlot->Fill(temp,pressure);
   }
 
   std::cout << "buffer mean = " << medianValue(smoothBuffer) << std::endl;
@@ -117,17 +132,20 @@ int main(int argc, char** argv)
     //read next value in tree, which is appended at front of the buffer:
     if (i+bufferSize/2 < nEntries) {
       tree->GetEntry(i+bufferSize/2);
-    }
+      times << time;
+      pressures << pressure;
 
-    times << time;
-    pressures << pressure;
+    }
+    pressuresSmoothed << pressureSmoothed;
+
+    corrPlot->Fill(temp,pressureSmoothed);
 
     if (false) {
       qDebug("pressureSmoothed = %f", pressureSmoothed);
       qDebug("abweichung = %f", fabs(pressureSmoothed-pressure) / pressureSmoothed) ;
     }
 
-    if(isnan(pressure) || isnan(pressureSmoothed)  || (fabs(pressureSmoothed-pressure) / pressureSmoothed < 0.005)) //only accept pressure
+    if((isnan(pressure) || isnan(pressureSmoothed)  || (fabs(pressureSmoothed-pressure) / pressureSmoothed < 0.01)) && pressure < 2500) //only accept pressure
       smoothBuffer.enqueue(pressure);
     else
       smoothBuffer.enqueue(sqrt(-1));
@@ -143,11 +161,42 @@ int main(int argc, char** argv)
     }
   }
 
-
-
-
-
   tree->Write("",TObject::kOverwrite);
+
+
+
+  //other stuff
+
+  TGraph* pressureGraph = new TGraph(times.size(), &times[0], &pressures[0]);
+  pressureGraph->SaveAs("pressureGraph.root");
+
+  TGraph* pressureSmoothedGraph = new TGraph(times.size(), &times[0], &pressuresSmoothed[0]);
+  pressureSmoothedGraph->SaveAs("pressureSmoothedGraph.root");
+
+  corrPlot->SaveAs("corrPlot.root");
+
+  //TGrapgSmoother
+  TGraphSmooth* gs = new TGraphSmooth("normal");
+  TGraph* grout = gs->SmoothSuper(pressureGraph,"",8);
+  grout->SaveAs("smoothedGraph.root");
+
+  //fftw
+  /*
+  Int_t n = pressures.size();
+  Double_t *in = new Double_t[2*(n/2+1)];
+  Double_t re_2,im_2;
+  for (Int_t i=0; i<n; i++){
+     in[i] = pressures.at(i);
+  }
+
+  TVirtualFFT *fft_own = TVirtualFFT::FFT(1, &n, "R2C ES K");
+   if (!fft_own)
+     return;
+   fft_own->SetPoints(in);
+   fft_own->Transform();
+   //Copy all the output points:
+   fft_own->GetPoints(in);
+   */
 }
 
 
